@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "大肥鱼 · 桌面 AI",
+  "short_name": "大肥鱼",
+  "description": "一只会互动的桌面大肥鱼宠物，可拖动、可喂食、可聊天。",
+  "start_url": "fatfish.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "window-controls-overlay"],
+  "orientation": "any",
+  "background_color": "#0b1026",
+  "theme_color": "#0b1026",
+  "categories": ["entertainment", "lifestyle"],
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
