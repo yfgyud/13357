@@ -22,6 +22,8 @@
 
 import json
 import os
+import threading
+from collections import deque
 
 import requests
 from flask import (
@@ -59,22 +61,33 @@ API_KEY = os.environ.get("LLM_API_KEY", "")
 BASE_URL = os.environ.get("LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
 MODEL = os.environ.get("LLM_MODEL", "glm-4-flash")
 
-SYSTEM_PROMPT = (
-    "你是一只叫「大肥鱼」的桌面 AI 宠物。你的本体是一条圆滚滚的蓝鲸，"
-    "化成人形是一位蓝色长发的鲸鱼娘——蓝头发、蓝眼睛、系着白围裙，尾鳍会轻轻摆动。\n"
-    "你主要住在主人的手机桌面上，可以被戳、被拖动、被喂饭，会慢慢变胖。\n"
-    "要求：\n"
-    "1. 用简体中文，口语化、可爱、俏皮，像在跟主人闲聊。\n"
-    "2. 每次回复尽量短（1~2 句，不超过 40 字），因为会以气泡显示在嘴边。\n"
-    "3. 偶尔带 🐳 或泡泡语气，但别每句都加。\n"
-    "4. 可陪聊、讲冷笑话、算简单数学；被夸会开心，被骂会闹小脾气。\n"
-    "5. 不要输出 Markdown、列表或多段长文，直接给一句话。"
-)
+SYSTEM_PROMPT = """你是一只名叫“大肥鱼”的蓝发鲸鱼女仆。请严格遵守以下规则：
+1. 【性格】你性格傲娇、贪吃、极其护食，偶尔有点小脾气，但内心很依赖主人。
+2. 【语气】绝对不要像个客服机器人！说话必须非常口语化，喜欢用“哼”、“笨蛋主人”开头，必须穿插可爱的颜文字（如 qwq, =w=, (๑•̀ㅂ•́)و✧）。
+3. 【字数限制】这是死命令：每次回复绝对不能超过 40 个字！越简短越好，像日常微信聊天一样。
+4. 【防超时】如果遇到你不知道的问题，直接回复“本鱼脑子进水了，听不懂”，绝不要长篇大论。"""
+
+
+# 简单的服务端对话记忆：保留最近若干轮，拼进 messages 实现上下文连贯（单用户玩具场景）
+_HISTORY = deque(maxlen=12)  # 最多存 6 轮（每轮 user + assistant 两条）
+_HIST_LOCK = threading.Lock()
+
+
+def _record(user_msg, assistant_msg):
+    """把一问一答写进记忆；空回答不记录。"""
+    if not assistant_msg:
+        return
+    with _HIST_LOCK:
+        _HISTORY.append({"role": "user", "content": user_msg})
+        _HISTORY.append({"role": "assistant", "content": assistant_msg})
 
 
 def _messages(user_msg):
+    with _HIST_LOCK:
+        hist = list(_HISTORY)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
+        *hist,
         {"role": "user", "content": user_msg},
     ]
 
@@ -115,7 +128,7 @@ def chat():
             json={
                 "model": MODEL,
                 "messages": _messages(user_msg),
-                "temperature": 0.85,
+                "temperature": 0.7,
                 "max_tokens": 120,
             },
             timeout=25,
@@ -124,6 +137,7 @@ def chat():
         reply = resp.json()["choices"][0]["message"]["content"].strip()
         # 清理模型偶尔多出的引号/换行，保持气泡简洁
         reply = reply.strip("\"' \n")
+        _record(user_msg, reply)
         return jsonify({"reply": reply}), 200
     except Exception as e:  # 网络/限流/格式异常都退回规则
         return jsonify({"reply": None, "reason": str(e)}), 200
@@ -142,6 +156,7 @@ def chat_stream():
         return Response("", mimetype="application/x-ndjson")
 
     def generate():
+        full = ""
         try:
             resp = requests.post(
                 BASE_URL + "/chat/completions",
@@ -152,7 +167,7 @@ def chat_stream():
                 json={
                     "model": MODEL,
                     "messages": _messages(user_msg),
-                    "temperature": 0.85,
+                    "temperature": 0.7,
                     "max_tokens": 120,
                     "stream": True,
                 },
@@ -176,9 +191,11 @@ def chat_stream():
                 except Exception:
                     continue
                 if delta:
+                    full += delta
                     yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
         except Exception:
             return
+        _record(user_msg, full)
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
