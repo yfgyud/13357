@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>大肥鱼 · 桌面 AI</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="大肥鱼" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="apple-touch-icon" href="icon.png" />
+<link rel="icon" href="icon.png" />
+<meta name="theme-color" content="#101a3d" />
+<style>
+  :root{
+    --bg1:#0a1130; --bg2:#1b2c66;
+    --ink:#0b1026;
+    --blue:#4a86e8; --blue-d:#1d3a86; --blue-l:#9ccbff;
+    --pink:#ff9fb2;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  html{background:#0a1130}
+  body{
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:
+      radial-gradient(1200px 800px at 72% -10%, #2a458f 0%, transparent 62%),
+      radial-gradient(900px 700px at 8% 108%, #10275f 0%, transparent 58%),
+      linear-gradient(160deg,var(--bg1),var(--bg2));
+    color:#eaf2ff; overflow:hidden; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  body.desktop{background:transparent}
+
+  .bg-bubbles{position:fixed;inset:0;pointer-events:none;z-index:0}
+  .bg-bubbles span{
+    position:absolute;bottom:-80px;border-radius:50%;
+    background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.55),rgba(140,200,255,.06));
+    animation:rise linear infinite;
+  }
+  @keyframes rise{to{transform:translateY(-115vh) translateX(24px);opacity:0}}
+
+  #stage{position:fixed;inset:0;z-index:1}
+
+  /* ===== 角色容器：定位层 → 3D 倾斜层 → 呼吸层 → 摸头层 ===== */
+  #fish{
+    position:absolute;left:50%;top:43%;
+    width:min(82vw,340px);
+    padding-top:78px;                 /* 顶部留白给气泡 */
+    transform:translate(-50%,-50%);
+    cursor:grab;
+    touch-action:none;
+    z-index:2;
+  }
+  #fish.dragging{cursor:grabbing}
+  .tilt{
+    transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));
+    transform-style:preserve-3d;
+    transition:transform .18s cubic-bezier(.22,.7,.3,1);
+    will-change:transform;
+  }
+  .breathe{animation:bob 3.8s ease-in-out infinite}
+  @keyframes bob{
+    0%,100%{transform:translateY(0) scale(1)}
+    50%{transform:translateY(-8px) scale(1.012)}
+  }
+  .spinner{position:relative;transform-origin:50% 55%}
+  .spinner.spin{animation:spin .85s cubic-bezier(.3,.1,.3,1)}
+  @keyframes spin{
+    0%{transform:rotate(0) scale(1)}
+    55%{transform:rotate(340deg) scale(.94)}
+    100%{transform:rotate(360deg) scale(1)}
+  }
+  /* 摸头：被手按下压扁 → 回弹 → 轻微上下跳动（Bounce），不再旋转 */
+  .spinner.pet{transform-origin:50% 100%;animation:pet .62s cubic-bezier(.34,1.56,.64,1)}
+  @keyframes pet{
+    0%{transform:scale(1,1)}
+    18%{transform:scale(1.09,.84)}   /* 被手按住压扁 */
+    38%{transform:scale(.95,1.07)}   /* 回弹拉长 */
+    56%{transform:scale(1.04,.96)}   /* 轻微跳动 */
+    74%{transform:scale(.98,1.02)}
+    100%{transform:scale(1,1)}
+  }
+  /* 摸头时的淡淡红晕（位置可在 pet.png 上微调百分比） */
+  .blush{
+    position:absolute;width:16%;height:9%;border-radius:50%;pointer-events:none;z-index:2;
+    background:radial-gradient(circle,rgba(255,120,150,.62) 0%,rgba(255,120,150,0) 72%);
+    filter:blur(2px);opacity:0;transition:opacity .25s ease;
+  }
+  .blush-l{left:26%;top:53%}
+  .blush-r{left:58%;top:53%}
+  .blush.show{opacity:1}
+  /* 头顶飘出的小爱心（纯 CSS 绘制，任何设备都能显示） */
+  .heart{
+    position:absolute;left:67%;top:3%;width:20px;height:20px;
+    transform:translateX(-50%);opacity:0;pointer-events:none;z-index:7;
+  }
+  .heart i{
+    position:absolute;inset:0;background:#ff6b95;transform:rotate(45deg);
+    box-shadow:0 0 10px rgba(255,107,149,.65);
+  }
+  .heart i::before,.heart i::after{
+    content:"";position:absolute;width:100%;height:100%;border-radius:50%;background:#ff6b95;
+  }
+  .heart i::before{top:-50%;left:0}
+  .heart i::after{left:-50%;top:0}
+  .heart.pop{animation:heartFloat 1s ease forwards}
+  @keyframes heartFloat{
+    0%{opacity:0;transform:translateX(-50%) translateY(8px) scale(.5)}
+    25%{opacity:1;transform:translateX(-50%) translateY(0) scale(1.05)}
+    100%{opacity:0;transform:translateX(-50%) translateY(-40px) scale(.95)}
+  }
+  /* 角色整体投影（多层，制造离地感） */
+  .pet-svg{
+    display:block;width:100%;height:auto;overflow:visible;
+    filter:drop-shadow(0 10px 12px rgba(4,10,30,.45)) drop-shadow(0 26px 34px rgba(4,10,30,.35));
+  }
+  /* 立绘角色（透明 PNG）：同一套呼吸/倾斜/旋转动效 */
+  .pet-img{
+    display:block;width:100%;height:auto;
+    filter:drop-shadow(0 12px 14px rgba(4,10,30,.5)) drop-shadow(0 30px 40px rgba(4,10,30,.4));
+    pointer-events:none; -webkit-user-drag:none; user-select:none;
+  }
+
+  /* 头发/尾巴/鳍 的微动画 */
+  #hairBack{transform-origin:50% 8%;animation:sway 5.2s ease-in-out infinite}
+  @keyframes sway{0%,100%{transform:rotate(-1.1deg)}50%{transform:rotate(1.1deg)}}
+  #tailFin{transform-origin:22% 70%;animation:tailSway 2.8s ease-in-out infinite}
+  @keyframes tailSway{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(6deg)}}
+  #finL,#finR{animation:finFlap 3.2s ease-in-out infinite}
+  #finL{transform-origin:100% 50%}
+  #finR{transform-origin:0% 50%}
+  @keyframes finFlap{0%,100%{transform:rotate(0)}50%{transform:rotate(-5deg)}}
+  .eyelid{transform-origin:center;transform-box:fill-box;animation:blink 5.2s infinite}
+  @keyframes blink{0%,92%,100%{transform:scaleY(0)}95.5%{transform:scaleY(1)}}
+  /* 高光层随倾斜反向移动 → 光泽流动，强化体积 */
+  #sheen{transition:transform .2s ease-out}
+
+  #bubble{
+    position:absolute;left:50%;top:0;transform:translateX(-50%) scale(.94);
+    max-width:min(88vw,320px);min-width:110px;padding:11px 15px;border-radius:18px;
+    background:linear-gradient(180deg,#ffffff,#eaf3ff);color:#152347;
+    font-size:15px;line-height:1.55;font-weight:600;
+    box-shadow:0 8px 22px rgba(4,12,40,.38), inset 0 1px 0 #fff;
+    opacity:0;transition:opacity .22s, transform .22s;
+    pointer-events:none;z-index:6;white-space:pre-wrap;
+    max-height:36vh;overflow:hidden;
+  }
+  #bubble.show{opacity:1;transform:translateX(-50%) scale(1)}
+  #bubble::after{
+    content:"";position:absolute;bottom:-9px;left:47%;
+    border:9px solid transparent;border-top-color:#eaf3ff;border-bottom:0;
+  }
+
+  #panel{
+    position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);
+    z-index:10;display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:center;
+    max-width:96vw;
+    background:rgba(10,18,46,.55);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(160,200,255,.18);border-radius:26px;padding:8px 10px;
+    box-shadow:0 12px 32px rgba(0,0,0,.4);
+  }
+  #panel input{
+    width:min(44vw,320px);border:0;outline:0;background:rgba(255,255,255,.94);
+    color:#0b1026;border-radius:999px;padding:10px 15px;font-size:15px;
+  }
+  #panel button{
+    border:0;cursor:pointer;font-size:14px;font-weight:700;color:#fff;
+    padding:10px 14px;border-radius:999px;
+    background:linear-gradient(135deg,#5b98f0,#3a5fd0);
+    box-shadow:0 4px 12px rgba(40,90,200,.4), inset 0 1px 0 rgba(255,255,255,.35);
+    transition:transform .1s, filter .1s;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #panel button:active{transform:scale(.94)}
+  #panel button.ghost{background:rgba(255,255,255,.14);box-shadow:none}
+  #panel button:hover{filter:brightness(1.08)}
+
+  #status{
+    position:fixed;top:calc(12px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:10;
+    display:flex;gap:12px;align-items:center;font-size:12.5px;color:#cfe0ff;
+    background:rgba(10,18,46,.5);border:1px solid rgba(160,200,255,.16);
+    padding:7px 14px;border-radius:999px;backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);white-space:nowrap;
+  }
+  #status b{color:#9ccbff}
+  .mood-emoji{font-size:17px}
+
+  #hint{
+    position:fixed;right:12px;bottom:calc(88px + env(safe-area-inset-bottom));z-index:9;
+    font-size:11px;color:#9fb6e0;text-align:right;line-height:1.7;opacity:.55;pointer-events:none;
+  }
+  @media (max-width:600px){ #hint{display:none} }
+  #hint kbd{background:rgba(255,255,255,.12);border-radius:5px;padding:1px 6px;font-size:11px}
+  body.desktop #hint{display:none}
+
+  .food{position:absolute;width:14px;height:14px;border-radius:50%;
+    background:radial-gradient(circle at 30% 28%,#fff0b8,#f0a52a 70%,#c97c10);
+    box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:4}
+  .pop{position:absolute;font-size:22px;z-index:8;pointer-events:none;animation:pop 1s ease forwards;font-weight:700}
+  @keyframes pop{0%{transform:translateY(0) scale(.6);opacity:1}100%{transform:translateY(-64px) scale(1.2);opacity:0}}
+
+  #winctl{position:fixed;top:10px;right:12px;z-index:20;display:none;gap:6px}
+  #winctl button{
+    width:30px;height:30px;border:0;border-radius:50%;cursor:pointer;font-size:15px;
+    background:rgba(0,0,0,.35);color:#fff;backdrop-filter:blur(6px);
+  }
+  body.desktop #winctl{display:flex}
+</style>
+</head>
+<body>
+  <div class="bg-bubbles" id="bg"></div>
+
+  <div id="winctl">
+    <button id="pinBtn" title="置顶/取消置顶">📌</button>
+    <button id="closeBtn" title="关闭">✕</button>
+  </div>
+
+  <div id="status">
+    <span class="mood-emoji" id="moodEmoji">💙</span>
+    <span>心情 <b id="mood">满足</b></span>
+    <span>体重 <b id="weight">5.0</b> kg</span>
+    <span>饱食 <b id="full">80</b>%</span>
+  </div>
+
+  <div id="stage">
+    <div id="fish">
+      <div id="bubble"></div>
+      <div class="tilt" id="tilt">
+        <div class="breathe">
+          <div class="spinner" id="spinner">
+            <img class="pet-img" src="pet.png" alt="大肥鱼·鲸鱼娘" draggable="false" />
+            <span class="blush blush-l"></span>
+            <span class="blush blush-r"></span>
+            <span class="heart" id="heart"><i></i></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <input id="talk" placeholder="跟大肥鱼说点什么…" autocomplete="off"/>
+    <button id="send">发送</button>
+    <button class="ghost" id="poke">摸摸头</button>
+    <button class="ghost" id="feed">喂饭</button>
+    <button class="ghost" id="reset">重置</button>
+  </div>
+
+  <div id="hint">
+    拖动可移动 · 双击/长按看积分 · 摸摸头逗她<br/>
+    聊天已接智谱大模型（流式）
+  </div>
+
+<script>
+const fish=document.getElementById('fish'), bubble=document.getElementById('bubble');
+const tilt=document.getElementById('tilt'), spinner=document.getElementById('spinner');
+const talk=document.getElementById('talk'), moodEl=document.getElementById('mood');
+const moodEm=document.getElementById('moodEmoji'), weightEl=document.getElementById('weight'), fullEl=document.getElementById('full');
+
+const state={mood:80,weight:5.0,full:80};
+
+let bubbleTimer, streaming=false;
+function say(text,ms=3600){
+  streaming=false;
+  bubble.textContent=text; bubble.classList.add('show');
+  clearTimeout(bubbleTimer);
+  bubbleTimer=setTimeout(()=>bubble.classList.remove('show'),ms);
+}
+/* 流式：逐字追加，不自动关闭 */
+function sayStream(text){
+  streaming=true;
+  bubble.textContent=text; bubble.classList.add('show');
+  clearTimeout(bubbleTimer);
+}
+function sayEnd(ms=6000){
+  streaming=false;
+  clearTimeout(bubbleTimer);
+  bubbleTimer=setTimeout(()=>bubble.classList.remove('show'),ms);
+}
+/* 打字机：逐字显示，用于把拟声词“替换”成大模型的台词 */
+let twTimer=null;
+function typeWriter(text, speed=45){
+  streaming=false;
+  clearTimeout(bubbleTimer);
+  clearInterval(twTimer);
+  bubble.classList.add('show');
+  bubble.textContent='';
+  if(!text){ bubbleTimer=setTimeout(()=>bubble.classList.remove('show'),3000); return; }
+  let i=0;
+  twTimer=setInterval(()=>{
+    i++;
+    bubble.textContent=text.slice(0,i);
+    if(i>=text.length){
+      clearInterval(twTimer);
+      bubbleTimer=setTimeout(()=>bubble.classList.remove('show'),5000);
+    }
+  }, speed);
+}
+function pop(text,x,y){
+  const p=document.createElement('div'); p.className='pop'; p.textContent=text;
+  p.style.left=x+'px'; p.style.top=y+'px'; document.body.appendChild(p);
+  setTimeout(()=>p.remove(),1000);
+}
+
+/* ---------- 前端规则兜底（后端不可用时） ---------- */
+function fishBrain(userText){
+  const t=(userText||'').trim();
+  if(!t) return pick(['你不说我也懒得理你～','咕噜…（在发呆）','戳我干嘛，我又不会跑']);
+  const k=(arr)=>arr.some(w=>t.includes(w));
+  if(k(['你好','嗨','hi','hello','在吗','在不在'])) return pick(['你好呀～我是小蓝鲸','咕噜！是你来了','在的在的，我尾巴还晃着呢']);
+  if(k(['名字','叫什么','谁'])) return '我是大肥鱼，现在是蓝发鲸鱼娘形态，住在你手机上🐳';
+  if(k(['吃','饿','饭','喂','food','肚子'])) return pick(['好饿…再喂我一口嘛','我是鲸鱼，一顿能吃很多但我会克制','吧唧吧唧，再来点']);
+  if(k(['胖','肥','重','减肥','瘦'])) return pick([`我现在 ${state.weight.toFixed(1)} kg，刚刚好！`,'胖怎么了，圆润才可爱','减肥？不存在的，鱼生苦短']);
+  if(k(['睡','困','晚安','休息','累'])) { state.mood=Math.max(0,state.mood-5); return 'zzz…那我先睡会儿，别关灯🌙'; }
+  if(k(['爱你','喜欢','亲','抱'])) return pick(['啵啾💋','我也…勉强喜欢你啦','泡泡里都是你的名字']);
+  if(k(['讨厌','笨','傻','滚'])) { state.mood=Math.max(0,state.mood-15); return pick(['哼，鲸鱼也有脾气','你再说一遍试试','咕噜（生气地摆尾）']); }
+  if(k(['无聊','没事','干啥','在干嘛'])) return pick(['在练习摆尾巴','盯着屏幕里的你发呆','数泡泡玩呢']);
+  if(k(['故事','讲','笑话','笑'])) return pick(['有一条鱼走进酒吧…它沉了🐟','为什么鱼不开车？因为会晕水','我讲笑话会冒泡泡的']);
+  if(k(['谢谢','感谢','谢'])) return '不客气，记得多喂我🐳';
+  if(k(['再见','拜拜','走了','bye'])) return '游慢点，记得回来看我～';
+  const m=t.match(/(-?\d+(?:\.\d+)?)\s*([+\-×x*÷/])\s*(-?\d+(?:\.\d+)?)/);
+  if(m){
+    const a=parseFloat(m[1]),b=parseFloat(m[3]),op=m[2]; let r;
+    if(op==='+'||op==='＋') r=a+b;
+    else if(op==='-'||op==='－') r=a-b;
+    else if(op==='*'||op==='×'||op==='x'||op==='X'||op==='＊') r=a*b;
+    else if(op==='/'||op==='÷') r=b===0?'鱼不会除以零哦':a/b;
+    if(r!==undefined) return `算出来是 ${r}～（我可是会算数的鲸🐳）`;
+  }
+  return pick(['咕噜咕噜…（没听懂但很认真）','你说的我记在小本本上了🐳','鱼脑正在加载：……加载失败，但心情不错','这个我得游回去问问老鲸王']);
+}
+function pick(a){return a[Math.floor(Math.random()*a.length)];}
+
+/* ---------- 流式对话（NDJSON 逐行） ---------- */
+async function chatStream(text, onDelta){
+  const r=await fetch('/api/chat_stream',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({message:text})
+  });
+  if(!r.ok || !r.body) return null;
+  const reader=r.body.getReader();
+  const dec=new TextDecoder();
+  let buf='', full='';
+  while(true){
+    const {done,value}=await reader.read();
+    if(done) break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n'))>=0){
+      const line=buf.slice(0,i).trim();
+      buf=buf.slice(i+1);
+      if(!line) continue;
+      try{
+        const j=JSON.parse(line);
+        if(j.delta){ full+=j.delta; onDelta(full); }
+      }catch(_){}
+    }
+  }
+  return full||null;
+}
+
+/* 非流式兜底 */
+async function chatOnce(text){
+  try{
+    const r=await fetch('/api/chat',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:text})
+    });
+    const j=await r.json();
+    return (j&&j.reply)?j.reply:null;
+  }catch(e){ return null; }
+}
+
+async function chat(){
+  const v=talk.value.trim(); if(!v) return;
+  talk.value='';
+  say('…（在想了）',1500);
+  let got='';
+  try{
+    const full=await chatStream(v, txt=>{ got=txt; sayStream(txt); });
+    if(full && full.trim()){
+      sayEnd(7000);
+    }else{
+      const r=await chatOnce(v);
+      if(r){ say(r,7000); } else { say(fishBrain(v)); }
+    }
+  }catch(e){
+    const r=await chatOnce(v);
+    say(r? r : fishBrain(v));
+  }
+  reactMood(v);
+}
+
+/* ---------- 积分 ---------- */
+async function fetchCredits(){
+  try{
+    const r=await fetch('/api/credits');
+    const j=await r.json();
+    return (j && j.text) ? j.text : null;
+  }catch(e){ return null; }
+}
+function spin(){ spinner.classList.remove('spin','pet'); void spinner.offsetWidth; spinner.classList.add('spin'); }
+function showCredits(){
+  spin();
+  fetchCredits().then(t=> say(t ? t : '转晕了…没查到积分🐳💫'));
+}
+document.getElementById('send').onclick=chat;
+talk.addEventListener('keydown',e=>{ if(e.key==='Enter') chat(); });
+
+function reactMood(t){
+  if(t.includes('讨厌')||t.includes('笨')||t.includes('傻')) state.mood=Math.max(0,state.mood-12);
+  else if(t.includes('爱')||t.includes('喜欢')) state.mood=Math.min(100,state.mood+8);
+  else state.mood=Math.min(100,state.mood+2);
+  updateStatus();
+}
+
+const blushL=document.querySelector('.blush-l'), blushR=document.querySelector('.blush-r'), heart=document.getElementById('heart');
+
+/* 摸头：压扁回弹 + 红晕 + 小爱心 + 先弹拟声词、后台拉大模型台词、打字机替换 */
+const PET_ONOMATOPOEIA=['唔…','呀！','嗯♪','呜…','咦？','唔嗯～'];
+let petToken=0;
+function petHead(){
+  // 1) 摸头动画：先被按下压扁，再回弹并轻微跳动（不再旋转）
+  spinner.classList.remove('pet','spin'); void spinner.offsetWidth; spinner.classList.add('pet');
+  // 2) 脸上淡淡的红晕
+  blushL.classList.add('show'); blushR.classList.add('show');
+  setTimeout(()=>{ blushL.classList.remove('show'); blushR.classList.remove('show'); }, 900);
+  // 3) 头顶飘出小爱心
+  heart.classList.remove('pop'); void heart.offsetWidth; heart.classList.add('pop');
+  // 4) 立刻弹出一个固定的拟声词占位（防网络延迟导致手感变差）
+  say(pick(PET_ONOMATOPOEIA), 12000);
+  // 5) 同时后台请求大模型，拿到后用打字机效果替换拟声词
+  requestPetLine();
+}
+/* 后台请求摸头台词；用 token 防止旧响应覆盖新响应 */
+async function requestPetLine(){
+  const my=++petToken;
+  try{
+    const r=await fetch('/api/pet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    if(my!==petToken) return;
+    const j=await r.json();
+    if(j&&j.reply){ typeWriter(j.reply,45); return; }
+  }catch(e){}
+  if(my!==petToken) return;
+  // 兜底：后端不可用 / 超时，仍用打字机吐一句固定傲娇台词
+  typeWriter(pick([
+    '唔…笨蛋主人，摸头会长不高的啦！',
+    '哼，摸头就算了…又不是小孩子 qwq',
+    '笨蛋主人，再摸要收利息了=w=',
+    '唔…手感这么好？算了让你摸一下下'
+  ]),45);
+}
+document.getElementById('poke').onclick=petHead;
+// 动画结束后清掉 pet 类，避免残留 transform 影响呼吸/倾斜
+spinner.addEventListener('animationend',()=>spinner.classList.remove('pet'));
+
+function feed(){
+  if(state.full>=100){ say('吃不下了…撑得圆滚滚🥲'); return; }
+  const r=fish.getBoundingClientRect();
+  const fx=r.left+r.width*0.62, fy=r.top+r.height*0.55;
+  const f=document.createElement('div'); f.className='food'; f.style.left=fx+'px'; f.style.top=fy+'px'; document.body.appendChild(f);
+  f.animate([{top:fy+'px',opacity:1},{top:(fy+52)+'px',opacity:0}],{duration:650,easing:'ease-in'});
+  setTimeout(()=>f.remove(),650);
+  state.full=Math.min(100,state.full+18); state.weight=Math.min(20,state.weight+0.3); state.mood=Math.min(100,state.mood+6);
+  updateStatus(); pop('+0.3kg', fx, fy-10);
+  say(pick(['吧唧吧唧，真香🐳','好吃！再喂点嘛','鲸生圆满了']));
+}
+document.getElementById('feed').onclick=feed;
+
+document.getElementById('reset').onclick=()=>{
+  state.mood=80; state.weight=5.0; state.full=80; updateStatus();
+  say('重启完毕，我还是那只蓝蓝的大肥鱼💙');
+};
+
+function updateStatus(){
+  weightEl.textContent=state.weight.toFixed(1); fullEl.textContent=Math.round(state.full);
+  let m='满足',e='💙';
+  if(state.full<35){m='有点饿';e='🥺';}
+  else if(state.mood<40){m='不开心';e='😤';}
+  else if(state.weight>9){m='撑死啦';e='🥵';}
+  else if(state.full>92){m='吃太饱';e='😵';}
+  else if(state.mood>90){m='超开心';e='😊';}
+  moodEl.textContent=m; moodEm.textContent=e;
+  saveState();
+}
+/* 本地记忆：手机上每次打开都记得体重/心情/位置（PWA 的 localStorage 会持久化） */
+const LS_KEY='fatfish-state-v1';
+function saveState(){
+  try{
+    const s={mood:state.mood,weight:state.weight,full:state.full,x:fish.style.left,y:fish.style.top};
+    localStorage.setItem(LS_KEY,JSON.stringify(s));
+  }catch(_){}
+}
+function loadState(){
+  try{
+    const s=JSON.parse(localStorage.getItem(LS_KEY)||'null');
+    if(s){
+      if(typeof s.mood==='number') state.mood=s.mood;
+      if(typeof s.weight==='number') state.weight=s.weight;
+      if(typeof s.full==='number') state.full=s.full;
+      if(s.x) fish.style.left=s.x;
+      if(s.y) fish.style.top=s.y;
+    }
+  }catch(_){}
+}
+loadState();
+updateStatus();
+
+/* ---------- 拖动（触屏 + 鼠标统一） ---------- */
+let drag=false,ox=0,oy=0,moved=false,sx=0,sy=0,longTimer=null;
+fish.addEventListener('pointerdown',e=>{
+  drag=true; moved=false; sx=e.clientX; sy=e.clientY;
+  fish.classList.add('dragging');
+  const r=fish.getBoundingClientRect();
+  const cxp=r.left+r.width/2, cyp=r.top+r.height/2;
+  ox=e.clientX-cxp; oy=e.clientY-cyp;
+  try{ fish.setPointerCapture(e.pointerId); }catch(_){}
+  longTimer=setTimeout(()=>{ moved=true; showCredits(); },560);
+});
+fish.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  if(Math.abs(e.clientX-sx)>6||Math.abs(e.clientY-sy)>6){ moved=true; clearTimeout(longTimer); }
+  fish.style.left=(e.clientX-ox)+'px';
+  fish.style.top=(e.clientY-oy)+'px';
+});
+function endDrag(e){
+  if(!drag) return;
+  drag=false; fish.classList.remove('dragging'); clearTimeout(longTimer);
+  try{ fish.releasePointerCapture(e.pointerId); }catch(_){}
+  fish.style.left=clamp(fish.offsetLeft, 40, innerWidth-40)+'px';
+  fish.style.top=clamp(fish.offsetTop, 60, innerHeight-40)+'px';
+  saveState();
+}
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+fish.addEventListener('pointerup',endDrag);
+fish.addEventListener('pointercancel',endDrag);
+fish.addEventListener('dblclick',showCredits);
+fish.addEventListener('click',()=>{ if(!moved) petHead(); });
+
+/* ---------- 3D 视差倾斜：让角色有"厚度" ---------- */
+const MAX_RX=7, MAX_RY=10;
+function applyTilt(cx,cy){
+  const nx=(cx/innerWidth)*2-1;      // -1..1
+  const ny=(cy/innerHeight)*2-1;
+  const ry=(-nx*MAX_RY).toFixed(2);
+  const rx=(ny*MAX_RX).toFixed(2);
+  tilt.style.setProperty('--ry', ry+'deg');
+  tilt.style.setProperty('--rx', rx+'deg');
+  const sh=document.getElementById('sheen');
+  if(sh) sh.style.transform=`translate(${(-nx*7).toFixed(1)}px, ${(ny*5).toFixed(1)}px)`;
+}
+window.addEventListener('pointermove',e=>{ if(!drag) applyTilt(e.clientX,e.clientY); },{passive:true});
+/* 手机：手指拖动时也跟随 */
+fish.addEventListener('pointermove',e=>applyTilt(e.clientX,e.clientY));
+
+/* 背景泡泡 */
+const bg=document.getElementById('bg');
+for(let i=0;i<18;i++){
+  const s=document.createElement('span'); const sz=Math.random()*40+10;
+  s.style.width=sz+'px'; s.style.height=sz+'px'; s.style.left=Math.random()*100+'vw';
+  s.style.animationDuration=(Math.random()*12+8)+'s'; s.style.animationDelay=(-Math.random()*12)+'s';
+  bg.appendChild(s);
+}
+
+const idle=['今天的水温刚刚好…','盯——你屏幕好亮哦','我数到第三颗泡泡就犯困了','要有人戳我才开心🐳','听说鲸鱼记性很好，我记得你','游一游，脂肪少一丢丢'];
+setInterval(()=>{ if(bubble.classList.contains('show')||streaming) return; if(Math.random()<0.5) say(pick(idle),2800); },10000);
+setInterval(()=>{ state.full=Math.max(0,state.full-3); if(state.full<30) state.mood=Math.max(0,state.mood-2); updateStatus(); },12000);
+
+setTimeout(()=>say('我是大肥鱼🐳 戳我、喂我、跟我说说话都行～',4200),700);
+
+/* ---------- 桌面窗口控制（pywebview 注入时） ---------- */
+document.addEventListener('pywebviewready',()=>{
+  document.body.classList.add('desktop');
+  document.getElementById('closeBtn').onclick=()=>window.pywebview.api.close_app();
+  document.getElementById('pinBtn').onclick=()=>{
+    const pinned=window.pywebview.api.toggle_pin();
+    document.getElementById('pinBtn').textContent=pinned?'📌':'📍';
+  };
+});
+
+/* ---------- PWA：注册 Service Worker（让手机能"添加到主屏"并离线打开） ---------- */
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
